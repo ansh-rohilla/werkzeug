@@ -1,23 +1,22 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 import json
 import mimetypes
 import sys
 import typing as t
+import wsgiref.types as wt
 from collections import defaultdict
-from datetime import datetime
 from io import BytesIO
 from itertools import chain
 from random import random
-from tempfile import TemporaryFile
 from time import time
 from types import TracebackType
 from urllib.parse import unquote
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
 
-from ._internal import _get_environ
 from ._internal import _wsgi_decoding_dance
 from ._internal import _wsgi_encoding_dance
 from .datastructures.auth import Authorization
@@ -41,123 +40,84 @@ from .sansio.multipart import Preamble
 from .urls import _urlencode
 from .urls import iri_to_uri
 from .utils import _get_content_type
-from .utils import cached_property
 from .wrappers.request import Request
 from .wrappers.response import Response
 from .wsgi import ClosingIterator
 
-if t.TYPE_CHECKING:
-    from _typeshed.wsgi import WSGIApplication
-    from _typeshed.wsgi import WSGIEnvironment
-
 
 def stream_encode_multipart(
-    data: t.Mapping[str, t.Any],
-    use_tempfile: bool = True,
-    threshold: int = 1024 * 500,
-    boundary: str | None = None,
+    data: t.Mapping[str, t.Any], boundary: str | None = None
 ) -> tuple[t.IO[bytes], int, str]:
-    """Encode a dict of values (either strings or file descriptors or
-    :class:`FileStorage` objects.) into a multipart encoded string stored
-    in a file descriptor.
+    """Encode and write multipart form data to a stream.
 
-    This is not secure and must only be used during testing, never in applications.
+    This is not secure and must only be used during testing, never in
+    applications.
+
+    :param data: Mapping of names to text or file values.
+    :param boundary: Boundary to use between parts.
+    :return: ``(stream, length, boundary)``
+
+    .. versionchanged:: 3.2
+        Always writes to ``BytesIO``. The ``use_tempfile`` and ``threshold``
+        parameters were removed.
 
     .. versionchanged:: 3.0
         The ``charset`` parameter was removed.
+
+    :meta private:
     """
     if boundary is None:
         boundary = f"---------------WerkzeugFormPart_{time()}{random()}"
 
-    stream: t.IO[bytes] = BytesIO()
-    total_length = 0
-    on_disk = False
-    write_binary: t.Callable[[bytes], int]
-
-    if use_tempfile:
-
-        def write_binary(s: bytes) -> int:
-            nonlocal stream, total_length, on_disk
-
-            if on_disk:
-                return stream.write(s)
-            else:
-                length = len(s)
-
-                if length + total_length <= threshold:
-                    stream.write(s)
-                else:
-                    new_stream = t.cast(t.IO[bytes], TemporaryFile("wb+"))
-                    new_stream.write(stream.getvalue())  # type: ignore[attr-defined]
-                    new_stream.write(s)
-                    stream = new_stream
-                    on_disk = True
-
-                total_length += length
-                return length
-
-    else:
-        write_binary = stream.write
-
+    stream = BytesIO()
     encoder = MultipartEncoder(boundary.encode())
-    write_binary(encoder.send_event(Preamble(data=b"")))
+    stream.write(encoder.send_event(Preamble(data=b"")))
+
     for key, value in _iter_data(data):
         reader = getattr(value, "read", None)
+
         if reader is not None:
             filename = getattr(value, "filename", getattr(value, "name", None))
             content_type = getattr(value, "content_type", None)
+
             if content_type is None:
                 content_type = (
                     filename
                     and mimetypes.guess_type(filename)[0]
                     or "application/octet-stream"
                 )
+
             headers = value.headers
             headers.update([("Content-Type", content_type)])
+
             if filename is None:
-                write_binary(encoder.send_event(Field(name=key, headers=headers)))
+                stream.write(encoder.send_event(Field(name=key, headers=headers)))
             else:
-                write_binary(
+                stream.write(
                     encoder.send_event(
                         File(name=key, filename=filename, headers=headers)
                     )
                 )
+
             while True:
                 chunk = reader(16384)
 
                 if not chunk:
-                    write_binary(encoder.send_event(Data(data=chunk, more_data=False)))
+                    stream.write(encoder.send_event(Data(data=chunk, more_data=False)))
                     break
 
-                write_binary(encoder.send_event(Data(data=chunk, more_data=True)))
+                stream.write(encoder.send_event(Data(data=chunk, more_data=True)))
         else:
             if not isinstance(value, str):
                 value = str(value)
-            write_binary(encoder.send_event(Field(name=key, headers=Headers())))
-            write_binary(encoder.send_event(Data(data=value.encode(), more_data=False)))
 
-    write_binary(encoder.send_event(Epilogue(data=b"")))
+            stream.write(encoder.send_event(Field(name=key, headers=Headers())))
+            stream.write(encoder.send_event(Data(data=value.encode(), more_data=False)))
 
+    stream.write(encoder.send_event(Epilogue(data=b"")))
     length = stream.tell()
     stream.seek(0)
     return stream, length, boundary
-
-
-def encode_multipart(
-    values: t.Mapping[str, t.Any], boundary: str | None = None
-) -> tuple[str, bytes]:
-    """Like `stream_encode_multipart` but returns a tuple in the form
-    (``boundary``, ``data``) where data is bytes.
-
-    This is not secure and must only be used during testing, never in applications.
-
-    .. versionchanged:: 3.0
-        The ``charset`` parameter was removed.
-    """
-    stream, length, boundary = stream_encode_multipart(
-        values, use_tempfile=False, boundary=boundary
-    )
-    return boundary, stream.read()
 
 
 def _iter_data(data: t.Mapping[str, t.Any]) -> t.Iterator[tuple[str, t.Any]]:
@@ -381,7 +341,7 @@ class EnvironBuilder:
             self.mimetype = mimetype
 
     @classmethod
-    def from_environ(cls, environ: WSGIEnvironment, **kwargs: t.Any) -> t.Self:
+    def from_environ(cls, environ: wt.WSGIEnvironment, **kwargs: t.Any) -> t.Self:
         """Turn an environ dict back into a builder. Any extra kwargs
         override the args extracted from the environ.
 
@@ -674,7 +634,7 @@ class EnvironBuilder:
         """
         self._files.close()
 
-    def get_environ(self) -> WSGIEnvironment:
+    def get_environ(self) -> wt.WSGIEnvironment:
         """Return the built environ.
 
         .. versionchanged:: 0.15
@@ -706,7 +666,7 @@ class EnvironBuilder:
         else:
             input_stream = BytesIO()
 
-        result: WSGIEnvironment = {}
+        result: wt.WSGIEnvironment = {}
         if self.environ_base:
             result.update(self.environ_base)
 
@@ -810,7 +770,7 @@ class Client:
 
     def __init__(
         self,
-        application: WSGIApplication,
+        application: wt.WSGIApplication,
         response_wrapper: type[Response] | None = None,
         use_cookies: bool = True,
         allow_subdomain_redirects: bool = False,
@@ -942,7 +902,7 @@ class Client:
 
         self._cookies.pop((domain, path, key), None)
 
-    def _add_cookies_to_wsgi(self, request: Request) -> None:
+    def _add_cookies_to_wsgi(self, environ: wt.WSGIEnvironment) -> None:
         """If cookies are enabled, set the ``Cookie`` header in the environ to the
         cookies that are applicable to the request host and path.
 
@@ -953,7 +913,7 @@ class Client:
         if self._cookies is None:
             return
 
-        url = urlsplit(request.url)
+        url = urlsplit(Request(environ).base_url)
         server_name = url.hostname or "localhost"
         value = "; ".join(
             c._to_request_header()
@@ -962,12 +922,12 @@ class Client:
         )
 
         if value:
-            request.environ["HTTP_COOKIE"] = value
+            environ["HTTP_COOKIE"] = value
         else:
-            request.environ.pop("HTTP_COOKIE", None)
+            environ.pop("HTTP_COOKIE", None)
 
     def _update_cookies_from_response(
-        self, request: Request, response: TestResponse
+        self, server_name: str, path: str, headers: list[str]
     ) -> None:
         """If cookies are enabled, update the stored cookies from any ``Set-Cookie``
         headers in the response.
@@ -979,11 +939,7 @@ class Client:
         if self._cookies is None:
             return
 
-        url = urlsplit(request.url)
-        server_name = url.hostname or "localhost"
-        path = url.path
-
-        for header in response.headers.getlist("Set-Cookie"):
+        for header in headers:
             cookie = Cookie._from_response_header(server_name, path, header)
 
             if cookie._should_delete:
@@ -996,12 +952,17 @@ class Client:
 
         :meta private:
         """
-        self._add_cookies_to_wsgi(request)
-        app_iter, status, headers = run_wsgi_app(
-            self.application, request.environ, buffered=buffered
+        self._add_cookies_to_wsgi(request.environ)
+        response = self.response_wrapper(
+            *run_wsgi_app(self.application, request.environ, buffered=buffered),
+            request=request,
         )
-        response = self.response_wrapper(app_iter, status, headers, request=request)
-        self._update_cookies_from_response(request, response)
+        url = urlsplit(request.base_url)
+        self._update_cookies_from_response(
+            url.hostname or "localhost",
+            url.path,
+            response.headers.getlist("Set-Cookie"),
+        )
         return response
 
     def resolve_redirect(
@@ -1212,7 +1173,7 @@ class Client:
         return f"<{type(self).__name__} {self.application!r}>"
 
 
-def create_environ(*args: t.Any, **kwargs: t.Any) -> WSGIEnvironment:
+def create_environ(*args: t.Any, **kwargs: t.Any) -> wt.WSGIEnvironment:
     """Create a new WSGI environ dict based on the values passed.  The first
     parameter should be the path of the request which defaults to '/'.  The
     second one can either be an absolute path (in that case the host is
@@ -1232,27 +1193,24 @@ def create_environ(*args: t.Any, **kwargs: t.Any) -> WSGIEnvironment:
 
 
 def run_wsgi_app(
-    app: WSGIApplication, environ: WSGIEnvironment, buffered: bool = False
+    app: wt.WSGIApplication,
+    environ: wt.WSGIEnvironment | Request,
+    buffered: bool = False,
 ) -> tuple[t.Iterable[bytes], str, Headers]:
-    """Return a tuple in the form (app_iter, status, headers) of the
-    application output.  This works best if you pass it an application that
-    returns an iterator all the time.
+    """Run a WSGI application with request data to get response data.
 
-    Sometimes applications may use the `write()` callable returned
-    by the `start_response` function.  This tries to resolve such edge
-    cases automatically.  But if you don't get the expected output you
-    should set `buffered` to `True` which enforces buffering.
-
-    If passed an invalid WSGI application the behavior of this function is
-    undefined.  Never pass non-conforming WSGI applications to this function.
-
-    :param app: the application to execute.
-    :param buffered: set to `True` to enforce buffering.
-    :return: tuple in the form ``(app_iter, status, headers)``
+    :param app: The WSGI application.
+    :param environ: The WSGI environment or request object.
+    :param buffered: Consume the response body iterator into a sequence. This
+        can use a lot of memory, or hang if the stream is infinite.
+    :return: ``(app_iter, status, headers)``
     """
+    if isinstance(environ, Request):
+        environ = environ.environ
+
     # Copy environ to ensure any mutations by the app (ProxyFix, for
     # example) don't affect subsequent requests (such as redirects).
-    environ = _get_environ(environ).copy()
+    environ = environ.copy()
     status: str
     response: tuple[str, list[tuple[str, str]]] | None = None
     buffer: list[bytes] = []
@@ -1360,15 +1318,6 @@ class TestResponse(Response):
         self.history = history
         self._compat_tuple = response, status, headers
 
-    @cached_property
-    def text(self) -> str:
-        """The response data as text. A shortcut for
-        ``response.get_data(as_text=True)``.
-
-        .. versionadded:: 2.1
-        """
-        return self.get_data(as_text=True)
-
 
 @dataclasses.dataclass
 class Cookie:
@@ -1392,7 +1341,7 @@ class Cookie:
     decoded_value: str
     """The cookie value, decoded as the application would set and see it."""
 
-    expires: datetime | None
+    expires: dt.datetime | None
     """The time at which the cookie is no longer valid."""
 
     max_age: int | None

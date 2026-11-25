@@ -3,13 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
-import sys
 import typing as t
-
-if t.TYPE_CHECKING:
-    from _typeshed.wsgi import WSGIEnvironment
-
-    from .wrappers.request import Request
 
 T = t.TypeVar("T")
 _logger: logging.Logger | None = None
@@ -34,14 +28,6 @@ def _wsgi_encoding_dance(s: str) -> str:
     return s.encode().decode("latin1")
 
 
-def _get_environ(obj: WSGIEnvironment | Request) -> WSGIEnvironment:
-    env = getattr(obj, "environ", obj)
-    assert isinstance(env, dict), (
-        f"{type(obj).__name__!r} is not a WSGI environment (has to be a dict)"
-    )
-    return env
-
-
 def _has_level_handler(logger: logging.Logger) -> bool:
     """Check if there is a handler in the logging chain that will handle
     the given logger's effective level.
@@ -61,20 +47,6 @@ def _has_level_handler(logger: logging.Logger) -> bool:
     return False
 
 
-class _ColorStreamHandler(logging.StreamHandler):  # type: ignore[type-arg]
-    """On Windows, wrap stream with Colorama for ANSI style support."""
-
-    def __init__(self) -> None:
-        try:
-            import colorama
-        except ImportError:
-            stream = None
-        else:
-            stream = colorama.AnsiToWin32(sys.stderr)
-
-        super().__init__(stream)
-
-
 def _log(type: str, message: str, *args: t.Any, **kwargs: t.Any) -> None:
     """Log a message to the 'werkzeug' logger.
 
@@ -92,7 +64,7 @@ def _log(type: str, message: str, *args: t.Any, **kwargs: t.Any) -> None:
             _logger.setLevel(logging.INFO)
 
         if not _has_level_handler(_logger):
-            _logger.addHandler(_ColorStreamHandler())
+            _logger.addHandler(logging.StreamHandler())
 
     getattr(_logger, type)(message.rstrip(), *args, **kwargs)
 

@@ -4,6 +4,7 @@ import sys
 from unittest import mock
 
 import pytest
+from conftest import mark_dev_server
 
 from werkzeug.debug import console
 from werkzeug.debug import DebuggedApplication
@@ -230,7 +231,7 @@ class TestDebugHelpers:
         debugged = DebuggedApplication(app)
         client = Client(debugged)
         response = client.get("/")
-        data = response.get_data(as_text=True)
+        data = response.text
         assert 'raise ValueError("inner")' in data
         assert '<div class="exc-divider">' in data
         assert 'raise KeyError("outer")' in data
@@ -242,7 +243,7 @@ def test_get_machine_id():
 
 
 @pytest.mark.parametrize("crash", (True, False))
-@pytest.mark.dev_server
+@mark_dev_server
 def test_basic(dev_server, crash):
     c = dev_server(use_debugger=True)
     r = c.request("/crash" if crash else "")

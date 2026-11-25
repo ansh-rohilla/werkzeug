@@ -10,7 +10,7 @@ Version 3.2.0
         The base ``MultiDict`` already retains order.
 
 -   Minimum required version of MarkupSafe is 3.0.3.
--   Minimum supported version of Watchdog is 6.0.
+-   Minimum supported version of Watchdog is 7.0.
 -   The CSP ``prefetch_src``, ``navigate_to``, and ``plugin_types`` properties
     are deprecated. Their corresponding directives have been deprecated or
     removed from the spec. :pr:`3114`
@@ -115,7 +115,8 @@ Version 3.2.0
     :issue:`3297`
 -   ``responder`` is deprecated. Use ``Request.application`` instead.
     :issue:`3302`
--   ``FileWrapper`` is deprecated. Use ``wrap_file`` instead. :issue:`3301`
+-   ``FileWrapper`` and ``wrap_file`` are deprecated. Use ``Request.wrap_file``
+    instead. :issue:`3301` :issue:`3281`
 -   ``wrap_file`` ``buffer_size`` defaults to 128 KiB instead of 8 KiB, for a 3x
     speed improvement. :issue:`3301`
 -   ``Response.make_conditional`` is deprecated. It is split into
@@ -161,6 +162,9 @@ Version 3.2.0
     :issue:`3323`
 -   ``Response.stream`` is deprecated. Use a list comprehension, generator, or
     ``send_file(BytesIO)`` instead. :issue:`3324`
+-   The ``Response._ensure_sequence`` ``mutable`` parameter is deprecated. Build
+    the sequence before constructing the response, rather than modifying it
+    after. :issue:`3320`
 -   ``Response.automatically_set_content_length`` is deprecated. Set
     ``response`` to a non-sequence iterable to indicate that the content length
     should not be set. :issue:`3323`
@@ -168,6 +172,20 @@ Version 3.2.0
     from IRIs to URIs is deprecated. Set ``response.location`` or
     ``response.content_location`` instead, which encode the values to URIs.
     :issue:`3318`
+-   The ``HTTPException.get_description``, ``get_body``, and ``get_headers``
+    methods are deprecated. The ``environ`` and ``scope`` arguments to these
+    and ``get_response`` are deprecated. :issue:`3281`
+-   The ``Map.bind_to_environ`` method is deprecated. Use the new
+    ``bind_to_request`` method instead. :issue:`3281`
+-   Passing a WSGI environment to ``parse_cookie`` is deprecated. Pass a string
+    instead. :issue:`3281`
+-   ``Response.freeze`` is deprecated. A new section about what to cache instead
+    of response objects is added to the docs. :issue:`3320`
+-   The ``Response.get_wsgi_headers`` and ``get_app_iter`` methods are
+    deprecated. Use ``get_wsgi_response`` instead. :issue:`3320`
+-   Added the ``Response.apply_status`` method. It is called automatically by
+    ``apply_conditions`` and ``get_wsgi_response``. The headers and body are
+    modified in place based on the status. :issue:`3320`
 -   ``is_hop_by_hop_header`` accepts a parsed ``Connection`` header to check
     against. The list of headers to always remove is updated to RFC 9110.
 -   The list of headers removed from 304 responses is updated to RFC 9110.
@@ -271,8 +289,22 @@ Version 3.2.0
     any non ``Sequence`` instead of anything without ``len``. :issue:`3323`
 -   ``Response.make_sequence`` closes the original iterable immediately rather
     than deferring until the response is closed. :issue:`3323`
+-   ``Response.make_sequence`` joins all items into a single bytes value.
+     :issue:`3320`
+-   ``Response.set_data`` closes the previous iterable. :issue:`3320`
+-   The response removes the ``Content-Length`` header and body for a 205
+    status. :issue:`3320`
 -   Development server cleans up resources if handling client disconnect fails.
     :issue:`3328`
+-   Colorama is never used. Modern Windows terminals support ANSI styles
+    natively. :pr:`3331`
+-   The ``Response.text`` property is a shortcut for
+    ``r.get_data(as_text=True)``. This is useful during tests, but was
+    previously only on ``TestResponse``. :pr:`3341`
+-   The test client always writes form data to ``BytesIO`` instead of a
+    temporary file.
+-   Fix multipart parser appending a stray byte when chunk boundary splits delimiter.
+    :issue:`3285`
 
 
 Version 3.1.9

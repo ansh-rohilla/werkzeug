@@ -1,8 +1,5 @@
+import datetime as dt
 import json
-from contextlib import nullcontext
-from datetime import datetime
-from datetime import timedelta
-from datetime import UTC
 from io import BytesIO
 
 import pytest
@@ -225,7 +222,7 @@ def test_response_access_control():
 
 def test_base_response():
     response = wrappers.Response("öäü")
-    assert response.get_data() == "öäü".encode()
+    assert response.text == "öäü"
 
     # set cookie
     response = wrappers.Response()
@@ -355,7 +352,7 @@ def test_type_forcing():
         response = SpecialResponse.force_type(orig_resp, fake_env)
         assert response.__class__ is SpecialResponse
         assert response.foo() == 42
-        assert response.get_data() == b"Hello World!"
+        assert response.text == "Hello World!"
         assert response.content_type == "text/html"
 
     # without env, no arbitrary conversion
@@ -414,9 +411,9 @@ def test_etag_request():
         assert etags.contains_weak("foo")
         assert not etags.contains_strong("foo")
 
-    dt = datetime(2008, 1, 22, 11, 18, 44, tzinfo=UTC)
-    assert request.if_modified_since == dt
-    assert request.if_unmodified_since == dt
+    value = dt.datetime(2008, 1, 22, 11, 18, 44, tzinfo=dt.UTC)
+    assert request.if_modified_since == value
+    assert request.if_unmodified_since == value
 
 
 def test_user_agent():
@@ -500,12 +497,6 @@ def test_get_data_method_parsing_caching_behavior():
     assert req.form["foo"] == "Hello World"
 
 
-def test_etag_response_freezing() -> None:
-    response = wrappers.Response("Hello, World!")
-    response.freeze()
-    assert response.etag
-
-
 def test_authenticate():
     resp = wrappers.Response()
     resp.www_authenticate.type = "basic"
@@ -542,7 +533,7 @@ def test_response_stream():
         response.stream.write(b"World!")
 
     assert response.response == [b"Hello ", b"World!"]
-    assert response.get_data() == b"Hello World!"
+    assert response.data == b"Hello World!"
 
 
 def test_common_response_descriptors():
@@ -555,7 +546,7 @@ def test_common_response_descriptors():
     del response.mimetype_params["charset"]
     assert response.content_type == "text/html; x-foo=yep"
 
-    now = datetime.now(UTC).replace(microsecond=0)
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0)
 
     assert response.content_length is None
     response.content_length = "42"
@@ -567,11 +558,11 @@ def test_common_response_descriptors():
         assert getattr(response, attr) == now
 
     assert response.age is None
-    age_td = timedelta(days=1, minutes=3, seconds=5)
+    age_td = dt.timedelta(days=1, minutes=3, seconds=5)
     response.age = age_td
     assert response.age == age_td
     response.age = 42
-    assert response.age == timedelta(seconds=42)
+    assert response.age == dt.timedelta(seconds=42)
 
     assert response.retry_after is None
     response.retry_after = now
@@ -610,7 +601,7 @@ def test_common_request_descriptors():
     assert request.mimetype_params == {"charset": "utf-8"}
     assert request.content_length == 23
     assert request.referrer == "http://www.example.com/"
-    assert request.date == datetime(2009, 2, 28, 19, 4, 35, tzinfo=UTC)
+    assert request.date == dt.datetime(2009, 2, 28, 19, 4, 35, tzinfo=dt.UTC)
     assert request.max_forwards == 10
     assert request.content_encoding == "gzip"
 
@@ -720,18 +711,18 @@ def test_response_iter_wrapping():
     del resp.headers["Content-Length"]
     resp.response = uppercasing(resp.iter_encoded())
     actual_resp = wrappers.Response.from_app(resp, req.environ, buffered=True)
-    assert actual_resp.get_data() == b"FOOBAR"
+    assert actual_resp.data == b"FOOBAR"
 
 
 def test_response_freeze():
-    def generate():
-        yield "foo"
-        yield "bar"
+    response = wrappers.Response(x for x in ("foo", "bar"))
 
-    resp = wrappers.Response(generate())
-    resp.freeze()
-    assert resp.response == [b"foo", b"bar"]
-    assert resp.headers["Content-Length"] == "6"
+    with pytest.deprecated_call():
+        response.freeze()
+
+    assert response.response == [b"foobar"]
+    assert response.content_length == 6
+    assert response.etag
 
 
 def test_response_content_length_uses_encode():
@@ -746,7 +737,7 @@ def test_other_method_payload():
         content_type="text/plain",
         method="MADE_UP",
     )
-    assert req.get_data() == data
+    assert req.data == data
     assert isinstance(req.stream, _LimitedStream)
 
 
@@ -761,52 +752,43 @@ def test_urlfication():
     assert resp.headers["Content-Location"] == "http://xn--n3h.net/"
 
 
-def test_new_response_iterator_behavior():
-    req = wrappers.Request.from_values()
+def test_response_iterator():
     resp = wrappers.Response("Hello Wörld!")
-
-    def get_content_length(resp):
-        headers = resp.get_wsgi_headers(req.environ)
-        return headers.get("Content-Length", type=int)
-
-    def generate_items():
-        yield "Hello "
-        yield "Wörld!"
-
-    # werkzeug encodes when set to `data` now, which happens
-    # if a string is passed to the response object.
     assert resp.response == ["Hello Wörld!".encode()]
-    assert resp.get_data() == "Hello Wörld!".encode()
-    assert get_content_length(resp) == 13
+    assert resp.text == "Hello Wörld!"
+    assert resp.content_length == 13
     assert not resp.is_streamed
     assert resp.is_sequence
 
     # try the same for manual assignment
     resp.set_data("Wörd")
     assert resp.response == ["Wörd".encode()]
-    assert resp.get_data() == "Wörd".encode()
-    assert get_content_length(resp) == 5
+    assert resp.text == "Wörd"
+    assert resp.content_length == 5
     assert not resp.is_streamed
     assert resp.is_sequence
 
     # automatic generator sequence conversion
-    resp.response = generate_items()
+    resp.response = iter(("Hello ", "Wörld!"))
     assert resp.is_streamed
     assert not resp.is_sequence
-    assert resp.get_data() == "Hello Wörld!".encode()
-    assert resp.response == [b"Hello ", "Wörld!".encode()]
+    assert resp.text == "Hello Wörld!"
+    assert resp.response == ["Hello Wörld!".encode()]
     assert not resp.is_streamed
     assert resp.is_sequence
 
     # automatic generator sequence conversion
-    resp.response = generate_items()
+    resp.response = iter(("Hello ", "Wörld!"))
     resp.implicit_sequence_conversion = False
     assert resp.is_streamed
     assert not resp.is_sequence
-    pytest.raises(RuntimeError, lambda: resp.get_data())
+
+    with pytest.raises(RuntimeError):
+        resp.get_data()
+
     resp.make_sequence()
-    assert resp.get_data() == "Hello Wörld!".encode()
-    assert resp.response == [b"Hello ", "Wörld!".encode()]
+    assert resp.text == "Hello Wörld!"
+    assert resp.response == ["Hello Wörld!".encode()]
     assert not resp.is_streamed
     assert resp.is_sequence
 
@@ -834,8 +816,8 @@ def test_response_headers_passthrough():
 
 def test_response_304_no_content_length():
     resp = wrappers.Response("Test", status=304)
-    env = create_environ()
-    assert "Content-Length" not in resp.get_wsgi_headers(env)
+    resp.apply_status()
+    assert "Content-Length" not in resp.headers
 
 
 def test_ranges():
@@ -883,7 +865,8 @@ def test_auto_content_length():
 
     resp = wrappers.Response(["Hello World!"])
     assert resp.content_length is None
-    assert resp.get_wsgi_headers({})["Content-Length"] == "12"
+    resp.apply_status()
+    assert resp.content_length == 12
 
 
 def test_stream_content_length():
@@ -892,14 +875,16 @@ def test_stream_content_length():
     with pytest.deprecated_call():
         resp.stream.writelines([b"foo", b"bar", b"baz"])
 
-    assert resp.get_wsgi_headers({})["Content-Length"] == "9"
+    resp.apply_status()
+    assert resp.content_length == 9
 
     resp = wrappers.Response("foo")
 
     with pytest.deprecated_call():
         resp.stream.writelines([b"bar", b"baz"])
 
-    assert resp.get_wsgi_headers({})["Content-Length"] == "9"
+    resp.apply_status()
+    assert resp.content_length == 9
 
 
 def test_disabled_auto_content_length():
@@ -929,33 +914,26 @@ def test_disabled_auto_content_length():
         (True, "../test", "http://localhost/a/test"),
     ),
 )
-def test_location_header_autocorrect(monkeypatch, auto, location, expect):
-    monkeypatch.setattr(wrappers.Response, "autocorrect_location_header", auto)
+def test_location_header_autocorrect(auto, location, expect):
     env = create_environ("/a/b/c")
     resp = wrappers.Response("Hello World!")
+    resp.autocorrect_location_header = auto
     resp.location = location
 
-    if auto:
-        ctx = pytest.deprecated_call()
-    else:
-        ctx = nullcontext()
-
-    with ctx:
+    with pytest.deprecated_call():
         assert resp.get_wsgi_headers(env)["Location"] == expect
 
 
 def test_204_and_1XX_response_has_no_content_length():
     response = wrappers.Response(status=204)
+    response.content_length = 123
+    response.apply_status()
     assert response.content_length is None
-
-    headers = response.get_wsgi_headers(create_environ())
-    assert "Content-Length" not in headers
 
     response = wrappers.Response(status=100)
+    response.content_length = 123
+    response.apply_status()
     assert response.content_length is None
-
-    headers = response.get_wsgi_headers(create_environ())
-    assert "Content-Length" not in headers
 
 
 def test_malformed_204_response_has_no_content_length():
@@ -993,12 +971,10 @@ def test_stream_zip():
     response = wrappers.Response()
 
     with pytest.deprecated_call():
-        stream = response.stream
+        with zipfile.ZipFile(response.stream, mode="w") as z:
+            z.writestr("foo", b"bar")
 
-    with zipfile.ZipFile(stream, mode="w") as z:
-        z.writestr("foo", b"bar")
-
-    with zipfile.ZipFile(BytesIO(response.get_data()), mode="r") as z:
+    with zipfile.ZipFile(BytesIO(response.data), mode="r") as z:
         assert z.namelist() == ["foo"]
         assert z.read("foo") == b"bar"
 
@@ -1100,7 +1076,7 @@ class TestJSON:
         value = {"ä": "b"}
         request = wrappers.Request.from_values(json=value)
         assert request.json == value
-        assert request.get_data()
+        assert request.data
 
     def test_response(self):
         value = {"ä": "b"}
@@ -1132,7 +1108,7 @@ class TestJSON:
         value = [1, 2, 3]
         request = wrappers.Request.from_values(json=value)
         assert request.get_json(cache=False) == [1, 2, 3]
-        assert not request.get_data()
+        assert not request.data
 
         with pytest.raises(BadRequest):
             request.get_json()

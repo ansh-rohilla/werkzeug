@@ -4,6 +4,7 @@ import collections.abc as cabc
 import functools
 import json
 import typing as t
+import wsgiref.types as wt
 from io import BytesIO
 from types import TracebackType
 
@@ -21,13 +22,9 @@ from ..formparser import _FormDataParser
 from ..formparser import _make_stream_factory
 from ..sansio.request import Request as _SansIORequest
 from ..utils import cached_property
+from ..wsgi import _FileWrapper
 from ..wsgi import _get_server
 from ..wsgi import _LimitedStream
-
-if t.TYPE_CHECKING:
-    from _typeshed.wsgi import StartResponse
-    from _typeshed.wsgi import WSGIApplication
-    from _typeshed.wsgi import WSGIEnvironment
 
 T = t.TypeVar("T")
 
@@ -123,7 +120,7 @@ class Request(_SansIORequest):
 
     #: The WSGI environment containing HTTP headers and information from
     #: the WSGI server.
-    environ: WSGIEnvironment
+    environ: wt.WSGIEnvironment
 
     #: Set when creating the request object. If ``True``, reading from
     #: the request body will cause a ``RuntimeException``. Useful to
@@ -132,7 +129,7 @@ class Request(_SansIORequest):
 
     def __init__(
         self,
-        environ: WSGIEnvironment,
+        environ: wt.WSGIEnvironment,
         populate_request: None = None,
         shallow: bool = False,
     ) -> None:
@@ -192,16 +189,16 @@ class Request(_SansIORequest):
     @t.overload
     @classmethod
     def application(
-        cls, f: t.Callable[[T, t.Self], WSGIApplication]
-    ) -> t.Callable[[T, WSGIEnvironment, StartResponse], t.Iterable[bytes]]: ...
+        cls, f: t.Callable[[T, t.Self], wt.WSGIApplication]
+    ) -> t.Callable[[T, wt.WSGIEnvironment, wt.StartResponse], t.Iterable[bytes]]: ...
     @t.overload
     @classmethod
     def application(
-        cls, f: t.Callable[[t.Self], WSGIApplication]
-    ) -> WSGIApplication: ...
+        cls, f: t.Callable[[t.Self], wt.WSGIApplication]
+    ) -> wt.WSGIApplication: ...
     @classmethod
     def application(
-        cls, f: t.Callable[..., WSGIApplication]
+        cls, f: t.Callable[..., wt.WSGIApplication]
     ) -> t.Callable[..., t.Iterable[bytes]]:
         """Create a WSGI application by decorating a function that takes a
         :class:`Request` and returns a :class:`.Response`. If the function
@@ -235,7 +232,7 @@ class Request(_SansIORequest):
                 try:
                     response = f(*rest, request)
                 except HTTPException as e:
-                    response = e.get_response(request)
+                    response = e.get_response()
 
                 return response(request.environ, start_response)
 
@@ -923,3 +920,26 @@ class Request(_SansIORequest):
             "Did not attempt to load JSON data because the request"
             " Content-Type was not 'application/json'."
         )
+
+    def wrap_file(
+        self, file: t.IO[bytes], buffer_size: int = 128 * 1024
+    ) -> cabc.Iterable[bytes]:
+        """Wrap a file with ``environ["wsgi.file_wrapper"]``, to be sent in a
+        :class:`.Response`. The WSGI server provides this if it has a way to
+        send file data more efficiently. If it's not provided, uses a basic
+        wrapper for consistent iteration.
+
+        You'll also want to set :attr:`.Response.direct_passthrough` to ``True``
+        to tell the response not to do its own iteration.
+
+        Use :attr:`send_file` instead of generating a file response manually. It
+        will handle caching, range requests, wrapping, and more.
+
+        :param file: A file-like object in ``rb`` mode.
+        :param buffer_size: Number of bytes to read for each iteration. Defaults
+            to 128 KiB.
+
+        .. versionadded:: 3.2
+        """
+        cls: wt.FileWrapper = self.environ.get("wsgi.file_wrapper", _FileWrapper)
+        return cls(file, buffer_size)

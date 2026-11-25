@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import typing as t
+import wsgiref.types as wt
 from functools import partial
 from functools import update_wrapper
 
@@ -10,13 +11,8 @@ from .exceptions import ClientDisconnected
 from .exceptions import RequestEntityTooLarge
 from .sansio import utils as _sansio_utils
 
-if t.TYPE_CHECKING:
-    from _typeshed.wsgi import FileWrapper
-    from _typeshed.wsgi import WSGIApplication
-    from _typeshed.wsgi import WSGIEnvironment
 
-
-def _responder(f: t.Callable[..., WSGIApplication]) -> WSGIApplication:
+def _responder(f: t.Callable[..., wt.WSGIApplication]) -> wt.WSGIApplication:
     """Marks a function as responder.  Decorate a function with it and it
     will automatically call the return value as WSGI application.
 
@@ -33,7 +29,7 @@ def _responder(f: t.Callable[..., WSGIApplication]) -> WSGIApplication:
 
 
 def _get_current_url(
-    environ: WSGIEnvironment,
+    environ: wt.WSGIEnvironment,
     root_only: bool = False,
     strip_querystring: bool = False,
     host_only: bool = False,
@@ -75,7 +71,7 @@ def _get_current_url(
 
 
 def _get_server(
-    environ: WSGIEnvironment,
+    environ: wt.WSGIEnvironment,
 ) -> tuple[str, int | None] | None:
     name = environ.get("SERVER_NAME")
 
@@ -92,7 +88,7 @@ def _get_server(
 
 
 def _get_host(
-    environ: WSGIEnvironment, trusted_hosts: t.Collection[str] | None = None
+    environ: wt.WSGIEnvironment, trusted_hosts: t.Collection[str] | None = None
 ) -> str:
     """Get and validate a request's ``host:port`` based on the values in the
     given WSGI environ.
@@ -141,7 +137,7 @@ def _get_host(
     )
 
 
-def _get_content_length(environ: WSGIEnvironment) -> int | None:
+def _get_content_length(environ: wt.WSGIEnvironment) -> int | None:
     """Return the ``Content-Length`` header value as an int. If the header is not given
     or the ``Transfer-Encoding`` header is ``chunked``, ``None`` is returned to indicate
     a streaming request. If the value is not an integer, or negative, 0 is returned.
@@ -160,7 +156,7 @@ def _get_content_length(environ: WSGIEnvironment) -> int | None:
 
 
 def _get_input_stream(
-    environ: WSGIEnvironment,
+    environ: wt.WSGIEnvironment,
     safe_fallback: bool = True,
     max_content_length: int | None = None,
 ) -> t.IO[bytes]:
@@ -219,7 +215,7 @@ def _get_input_stream(
     return stream
 
 
-def _get_path_info(environ: WSGIEnvironment) -> str:
+def _get_path_info(environ: wt.WSGIEnvironment) -> str:
     """Return ``PATH_INFO`` from  the WSGI environment.
 
     :param environ: WSGI environment to get the path from.
@@ -256,8 +252,9 @@ class ClosingIterator:
     def __init__(
         self,
         iterable: t.Iterable[bytes],
-        callbacks: None
-        | (t.Callable[[], None] | t.Iterable[t.Callable[[], None]]) = None,
+        callbacks: t.Callable[[], None]
+        | t.Iterable[t.Callable[[], None]]
+        | None = None,
     ) -> None:
         iterator = iter(iterable)
         self._next = t.cast(t.Callable[[], bytes], partial(next, iterator))
@@ -283,8 +280,8 @@ class ClosingIterator:
             callback()
 
 
-def wrap_file(
-    environ: WSGIEnvironment, file: t.IO[bytes], buffer_size: int = 128 * 1024
+def _wrap_file(
+    environ: wt.WSGIEnvironment, file: t.IO[bytes], buffer_size: int = 128 * 1024
 ) -> t.Iterable[bytes]:
     """Wrap a file with the ``wsgi.file_wrapper`` provided by the WSGI server.
     The WSGI server provides this if it has a way to send file data more
@@ -300,12 +297,15 @@ def wrap_file(
     :param file: A file-like object in ``rb`` mode.
     :param buffer_size: Number of bytes to read for each iteration.
 
+    .. deprecated:: 3.2
+        Will be removed in Werkzeug 4.0. Use ``Request.wrap_file`` instead.
+
     .. versionchanged:: 3.2
         Increase default ``buffer_size`` from 8 KiB to 128 KiB.
 
     .. versionadded:: 0.5
     """
-    cls: FileWrapper = environ.get("wsgi.file_wrapper", _FileWrapper)
+    cls: wt.FileWrapper = environ.get("wsgi.file_wrapper", _FileWrapper)
     return cls(file, buffer_size)
 
 
@@ -695,5 +695,14 @@ if not t.TYPE_CHECKING:
                 stacklevel=2,
             )
             return host_is_trusted
+
+        if name == "wrap_file":
+            warnings.warn(
+                "The 'wrap_file' function is deprecated and will be removed in"
+                " Werkzeug 4.0. Use 'Request.wrap_file' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return _wrap_file
 
         raise AttributeError(name)

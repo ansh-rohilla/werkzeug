@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import datetime as dt
 import typing as t
-from datetime import datetime
 from urllib.parse import parse_qsl
 
 from .._header_property import header_property
@@ -18,6 +18,7 @@ from ..datastructures.range import IfRange
 from ..datastructures.range import Range
 from ..datastructures.set import HeaderSet
 from ..datastructures.structures import ImmutableMultiDict
+from ..http import parse_cookie
 from ..http import parse_date
 from ..http import parse_list_header
 from ..http import parse_options_header
@@ -26,7 +27,6 @@ from ..http import SecFetchMode
 from ..http import SecFetchSite
 from ..user_agent import _UserAgent
 from ..utils import cached_property
-from .http import parse_cookie
 from .utils import get_current_url
 from .utils import get_host
 
@@ -263,7 +263,7 @@ class Request:
     def cookies(self) -> ImmutableMultiDict[str, str]:
         """A :class:`dict` with the contents of all cookies transmitted with
         the request."""
-        wsgi_combined_cookie = ";".join(self.headers.getlist("Cookie"))
+        combined_cookie = ";".join(self.headers.getlist("Cookie"))
         kwargs: dict[str, t.Any] = {}
 
         if self.dict_storage_class is not None:
@@ -277,7 +277,7 @@ class Request:
             )
             kwargs["cls"] = self.dict_storage_class
 
-        return parse_cookie(wsgi_combined_cookie, **kwargs)
+        return parse_cookie(combined_cookie, **kwargs)
 
     # Common Descriptors
 
@@ -354,7 +354,7 @@ class Request:
         """,
     )
 
-    date = header_property[datetime | None](
+    date = header_property[dt.datetime | None](
         "Date",
         load_func=parse_date,
         read_only=True,
@@ -523,7 +523,7 @@ class Request:
         """,
     )
 
-    if_modified_since = header_property[datetime | None](
+    if_modified_since = header_property[dt.datetime | None](
         "If-Modified-Since",
         load_func=parse_date,
         read_only=True,
@@ -537,7 +537,7 @@ class Request:
         """,
     )
 
-    if_unmodified_since = header_property[datetime | None](
+    if_unmodified_since = header_property[dt.datetime | None](
         "If-Unmodified-Since",
         load_func=parse_date,
         read_only=True,

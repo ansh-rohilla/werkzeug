@@ -24,6 +24,7 @@ import socket
 import socketserver
 import sys
 import typing as t
+import wsgiref.types as wt
 from http.server import BaseHTTPRequestHandler
 from http.server import HTTPServer
 from types import TracebackType
@@ -57,14 +58,6 @@ except ImportError:
     ssl = _SslDummy()  # type: ignore[assignment]
     connection_dropped_errors = (ConnectionError, socket.timeout)
 
-_log_add_style = True
-
-if os.name == "nt":
-    try:
-        __import__("colorama")
-    except ImportError:
-        _log_add_style = False
-
 can_fork = hasattr(os, "fork")
 
 if can_fork:
@@ -87,8 +80,6 @@ _TSSLContextArg = t.Union[
 ]
 
 if t.TYPE_CHECKING:
-    from _typeshed.wsgi import WSGIApplication
-    from _typeshed.wsgi import WSGIEnvironment
     from cryptography.hazmat.primitives.asymmetric.rsa import (
         RSAPrivateKeyWithSerialization,
     )
@@ -169,7 +160,7 @@ class WSGIRequestHandler(BaseHTTPRequestHandler):
     def server_version(self) -> str:  # type: ignore[override]
         return self.server._server_version
 
-    def make_environ(self) -> WSGIEnvironment:
+    def make_environ(self) -> wt.WSGIEnvironment:
         request_url = urlsplit(self.path)
         url_scheme = "http" if self.server.ssl_context is None else "https"
 
@@ -188,7 +179,7 @@ class WSGIRequestHandler(BaseHTTPRequestHandler):
 
         path_info = unquote(path_info)
 
-        environ: WSGIEnvironment = {
+        environ: wt.WSGIEnvironment = {
             "wsgi.version": (1, 0),
             "wsgi.url_scheme": url_scheme,
             "wsgi.input": self.rfile,
@@ -335,7 +326,7 @@ class WSGIRequestHandler(BaseHTTPRequestHandler):
             headers_set = headers
             return write
 
-        def execute(app: WSGIApplication) -> None:
+        def execute(app: wt.WSGIApplication) -> None:
             application_iter = app(environ, start_response)
             try:
                 for data in application_iter:
@@ -419,7 +410,7 @@ class WSGIRequestHandler(BaseHTTPRequestHandler):
                 raise
 
     def connection_dropped(
-        self, error: BaseException, environ: WSGIEnvironment | None = None
+        self, error: BaseException, environ: wt.WSGIEnvironment | None = None
     ) -> None:
         """Called if the connection was closed by the client.  By default
         nothing happens.
@@ -497,9 +488,6 @@ class WSGIRequestHandler(BaseHTTPRequestHandler):
 
 
 def _ansi_style(value: str, *styles: str) -> str:
-    if not _log_add_style:
-        return value
-
     codes = {
         "bold": 1,
         "red": 31,
@@ -723,7 +711,7 @@ class BaseWSGIServer(HTTPServer):
         self,
         host: str,
         port: int,
-        app: WSGIApplication,
+        app: wt.WSGIApplication,
         handler: type[WSGIRequestHandler] | None = None,
         passthrough_errors: bool = False,
         ssl_context: _TSSLContextArg = None,
@@ -900,7 +888,7 @@ class ForkingWSGIServer(ForkingMixIn, BaseWSGIServer):
         self,
         host: str,
         port: int,
-        app: WSGIApplication,
+        app: wt.WSGIApplication,
         processes: int = 40,
         handler: type[WSGIRequestHandler] | None = None,
         passthrough_errors: bool = False,
@@ -917,7 +905,7 @@ class ForkingWSGIServer(ForkingMixIn, BaseWSGIServer):
 def make_server(
     host: str,
     port: int,
-    app: WSGIApplication,
+    app: wt.WSGIApplication,
     threaded: bool = False,
     processes: int = 1,
     request_handler: type[WSGIRequestHandler] | None = None,
@@ -971,7 +959,7 @@ def is_running_from_reloader() -> bool:
 def run_simple(
     hostname: str,
     port: int,
-    application: WSGIApplication,
+    application: wt.WSGIApplication,
     use_reloader: bool = False,
     use_debugger: bool = False,
     use_evalex: bool = True,

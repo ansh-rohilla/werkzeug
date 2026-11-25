@@ -32,7 +32,7 @@ Source = "https://github.com/pallets/werkzeug/"
 Chat = "https://discord.gg/pallets"
 
 [project.optional-dependencies]
-watchdog = ["watchdog>=6"]
+watchdog = ["watchdog>=7"]
 
 [dependency-groups]
 dev = [
@@ -61,7 +61,7 @@ tests = [
     "ephemeral-port-reserve",
     "pytest",
     "pytest-timeout",
-    "watchdog"
+    "watchdog",
 ]
 typing = [
     "mypy",
@@ -118,13 +118,6 @@ show_error_codes = true
 pretty = true
 strict = true
 
-[[tool.mypy.overrides]]
-module = [
-    "colorama",
-    "pkg_resources",
-]
-ignore_missing_imports = true
-
 [tool.ruff]
 extend-exclude = ["examples/"]
 src = ["src"]
@@ -138,6 +131,7 @@ select = [
     "E",  # pycodestyle error
     "F",  # pyflakes
     "I",  # isort
+    "ICN",  # flake8-import-conventions
     "UP",  # pyupgrade
     "W",  # pycodestyle warning
 ]
@@ -145,6 +139,22 @@ select = [
 [tool.ruff.lint.isort]
 force-single-line = true
 order-by-type = false
+
+[tool.ruff.lint.flake8-import-conventions]
+banned-from = [
+    "collections.abc",
+    "datetime",
+    "pytest",
+    "typing",
+    "typing_extensions",
+    "wsgiref.types",
+]
+
+[tool.ruff.lint.flake8-import-conventions.extend-aliases]
+"collections.abc" = "cabc"
+typing = "t"
+typing_extensions = "te"
+"wsgiref.types" = "wt"
 
 [tool.tox]
 env_list = [
@@ -165,6 +175,7 @@ wheel_build_env = ".pkg"
 constrain_package_deps = true
 use_frozen_constraints = true
 dependency_groups = ["tests"]
+pass_env = ["CI"]
 commands = [[
     "pytest", "-v", "--tb=short", "--basetemp={env_tmp_dir}",
     {replace = "posargs", default = [], extend = true},
