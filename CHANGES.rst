@@ -303,6 +303,8 @@ Version 3.2.0
     previously only on ``TestResponse``. :pr:`3341`
 -   The test client always writes form data to ``BytesIO`` instead of a
     temporary file.
+-   Fix multipart parser appending a stray byte when chunk boundary splits delimiter.
+    :issue:`3285`
 
 
 Version 3.1.9
